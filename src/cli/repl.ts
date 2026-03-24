@@ -11,15 +11,16 @@ import {
   formatConfigForDisplay,
   type RuntimeConfig,
 } from "../config/index.js";
-import { createLLM, Conversation } from "../llm/index.js";
+import { createLLM } from "../llm/index.js";
+import { AgentRunner } from "../agent/index.js";
 
 const VERSION = "0.1.0";
 
 /** Runtime configuration - loaded at startup */
 let runtimeConfig: RuntimeConfig;
 
-/** Conversation instance - maintains chat history */
-let conversation: Conversation | null = null;
+/** Agent runner instance - handles tool-augmented conversations */
+let agent: AgentRunner | null = null;
 
 /** Built-in commands that the REPL handles directly */
 const COMMANDS: Record<string, { description: string; handler: () => boolean }> = {
@@ -32,6 +33,7 @@ const COMMANDS: Record<string, { description: string; handler: () => boolean }> 
       }
       display.newline();
       display.dim("Type any other text to chat with the agent.");
+      display.dim("The agent can use tools to read files and explore the codebase.");
       return true; // continue REPL
     },
   },
@@ -46,15 +48,14 @@ const COMMANDS: Record<string, { description: string; handler: () => boolean }> 
   "/usage": {
     description: "Show token usage for this session",
     handler: () => {
-      if (conversation) {
-        const usage = conversation.sessionUsage;
+      if (agent) {
+        const usage = agent.totalUsage;
         display.section("Session Token Usage");
-        console.log(`  Requests:      ${usage.requestCount}`);
-        console.log(`  Input tokens:  ${usage.totalInputTokens.toLocaleString()}`);
-        console.log(`  Output tokens: ${usage.totalOutputTokens.toLocaleString()}`);
-        console.log(`  Total tokens:  ${(usage.totalInputTokens + usage.totalOutputTokens).toLocaleString()}`);
+        console.log(`  Input tokens:  ${usage.inputTokens.toLocaleString()}`);
+        console.log(`  Output tokens: ${usage.outputTokens.toLocaleString()}`);
+        console.log(`  Total tokens:  ${(usage.inputTokens + usage.outputTokens).toLocaleString()}`);
       } else {
-        display.warn("No active conversation.");
+        display.warn("No active agent.");
       }
       return true;
     },
@@ -62,11 +63,11 @@ const COMMANDS: Record<string, { description: string; handler: () => boolean }> 
   "/clear": {
     description: "Clear conversation history",
     handler: () => {
-      if (conversation) {
-        conversation.clear();
+      if (agent) {
+        agent.clear();
         display.success("Conversation history cleared.");
       } else {
-        display.warn("No active conversation.");
+        display.warn("No active agent.");
       }
       return true;
     },
@@ -75,10 +76,10 @@ const COMMANDS: Record<string, { description: string; handler: () => boolean }> 
     description: "Exit the agent",
     handler: () => {
       // Show final usage before exit
-      if (conversation) {
-        const usage = conversation.sessionUsage;
-        if (usage.requestCount > 0) {
-          display.dim(`Session total: ${usage.totalInputTokens.toLocaleString()} in / ${usage.totalOutputTokens.toLocaleString()} out tokens`);
+      if (agent) {
+        const usage = agent.totalUsage;
+        if (usage.inputTokens > 0 || usage.outputTokens > 0) {
+          display.dim(`Session total: ${usage.inputTokens.toLocaleString()} in / ${usage.outputTokens.toLocaleString()} out tokens`);
         }
       }
       display.info("Goodbye!");
@@ -114,28 +115,26 @@ async function handleInput(userInput: string): Promise<boolean> {
     }
   }
 
-  // Send to LLM with streaming
-  if (!conversation) {
-    display.error("LLM not configured. Check your API keys with /config");
+  // Send to agent
+  if (!agent) {
+    display.error("Agent not configured. Check your API keys with /config");
     return true;
   }
 
   try {
     display.newline();
 
-    // Stream response token by token
-    const response = await conversation.chatStream(trimmed, (token) => {
-      process.stdout.write(token);
-    });
+    // Run agent (non-streaming for now due to tool calls)
+    const result = await agent.run(trimmed);
 
-    // End the streamed line and show usage
+    // Display response
+    console.log(result.response);
     display.newline();
-    display.newline();
-    display.dim(`[tokens: ${response.usage.inputTokens.toLocaleString()} in / ${response.usage.outputTokens.toLocaleString()} out]`);
+    display.dim(`[tokens: ${result.usage.inputTokens.toLocaleString()} in / ${result.usage.outputTokens.toLocaleString()} out]`);
     display.newline();
   } catch (error) {
     display.newline();
-    display.error(`LLM error: ${error instanceof Error ? error.message : String(error)}`);
+    display.error(`Agent error: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   return true;
@@ -160,14 +159,15 @@ export async function startRepl(): Promise<void> {
     display.newline();
   }
 
-  // Try to create LLM and conversation
+  // Try to create LLM and agent
   try {
     const llm = createLLM(runtimeConfig);
-    conversation = new Conversation(llm);
-    display.success(`LLM ready: ${runtimeConfig.config.llm.provider}/${runtimeConfig.config.llm.model}`);
+    agent = new AgentRunner(llm);
+    display.success(`Agent ready: ${runtimeConfig.config.llm.provider}/${runtimeConfig.config.llm.model}`);
+    display.dim("Tools available: read_file, glob");
   } catch (error) {
-    display.warn(`LLM not available: ${error instanceof Error ? error.message : String(error)}`);
-    display.dim("You can still use commands. Set API keys in .env to enable chat.");
+    display.warn(`Agent not available: ${error instanceof Error ? error.message : String(error)}`);
+    display.dim("You can still use commands. Set API keys in .env to enable the agent.");
   }
 
   display.newline();
