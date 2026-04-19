@@ -18,7 +18,7 @@ const CONFIG_FILENAME = ".mycoder.config.json";
 const DEFAULT_CONFIG: AppConfig = {
   llm: {
     provider: "openai",
-    model: "gpt-4o",
+    model: "gpt-4.1-nano",
     temperature: 0.7,
     maxTokens: 4096,
   },

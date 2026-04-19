@@ -9,7 +9,7 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { SystemMessage, HumanMessage, AIMessage, type BaseMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { AgentState, type AgentStateType } from "./state.js";
-import { AGENT_SYSTEM_PROMPT } from "./prompts.js";
+import { buildSystemPrompt, type ProjectContext } from "./prompts.js";
 import { allTools } from "../tools/index.js";
 
 /** Token usage tracking */
@@ -27,12 +27,15 @@ export interface AgentResult {
 /**
  * Create a LangGraph agent with tools
  */
-export function createAgent(model: BaseChatModel) {
+export function createAgent(model: BaseChatModel, projectContext?: ProjectContext) {
   // Bind tools to the model
   if (!model.bindTools) {
     throw new Error("Model does not support tool binding");
   }
   const modelWithTools = model.bindTools(allTools);
+
+  // Build system prompt with project context
+  const systemPrompt = buildSystemPrompt(projectContext);
 
   /**
    * Agent node - calls the LLM to decide what to do
@@ -44,7 +47,7 @@ export function createAgent(model: BaseChatModel) {
     const hasSystemPrompt = messages.some((m) => m._getType() === "system");
     const messagesWithSystem = hasSystemPrompt
       ? messages
-      : [new SystemMessage(AGENT_SYSTEM_PROMPT), ...messages];
+      : [new SystemMessage(systemPrompt), ...messages];
 
     // Call the model
     const response = await modelWithTools.invoke(messagesWithSystem);
@@ -98,8 +101,8 @@ export class AgentRunner {
   private conversationHistory: BaseMessage[] = [];
   private _totalUsage: AgentTokenUsage = { inputTokens: 0, outputTokens: 0 };
 
-  constructor(model: BaseChatModel) {
-    this.graph = createAgent(model);
+  constructor(model: BaseChatModel, projectContext?: ProjectContext) {
+    this.graph = createAgent(model, projectContext);
   }
 
   /**

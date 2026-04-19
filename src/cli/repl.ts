@@ -12,7 +12,9 @@ import {
   type RuntimeConfig,
 } from "../config/index.js";
 import { createLLM } from "../llm/index.js";
-import { AgentRunner } from "../agent/index.js";
+import { AgentRunner, type ProjectContext } from "../agent/index.js";
+import { scanDirectory, formatFileTree, detectProject } from "../context/index.js";
+import { setReadlineInterface } from "../tools/index.js";
 
 const VERSION = "0.1.0";
 
@@ -159,12 +161,37 @@ export async function startRepl(): Promise<void> {
     display.newline();
   }
 
+  // Scan project structure
+  const cwd = process.cwd();
+  display.dim("Scanning project structure...");
+  const projectInfo = detectProject(cwd);
+  const fileTree = scanDirectory(cwd, { maxDepth: 3, maxFiles: 100 });
+  const fileTreeStr = formatFileTree(fileTree);
+
+  const projectContext: ProjectContext = {
+    workingDirectory: cwd,
+    projectInfo,
+    fileTree: fileTreeStr,
+  };
+
+  // Show detected project info
+  if (projectInfo.name) {
+    display.info(`Project: ${projectInfo.name}`);
+  }
+  if (projectInfo.types.length > 0 && projectInfo.types[0] !== "unknown") {
+    display.dim(`Type: ${projectInfo.types.join(", ")} | Languages: ${projectInfo.languages.join(", ")}`);
+  }
+  if (projectInfo.frameworks.length > 0) {
+    display.dim(`Frameworks: ${projectInfo.frameworks.join(", ")}`);
+  }
+  display.newline();
+
   // Try to create LLM and agent
   try {
     const llm = createLLM(runtimeConfig);
-    agent = new AgentRunner(llm);
+    agent = new AgentRunner(llm, projectContext);
     display.success(`Agent ready: ${runtimeConfig.config.llm.provider}/${runtimeConfig.config.llm.model}`);
-    display.dim("Tools available: read_file, glob");
+    display.dim("Tools available: read_file, glob, write_file, edit_file");
   } catch (error) {
     display.warn(`Agent not available: ${error instanceof Error ? error.message : String(error)}`);
     display.dim("You can still use commands. Set API keys in .env to enable the agent.");
@@ -179,6 +206,9 @@ export async function startRepl(): Promise<void> {
     output,
     prompt: "you> ",
   });
+
+  // Share readline with approval system
+  setReadlineInterface(rl);
 
   rl.prompt();
 
